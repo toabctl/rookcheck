@@ -21,6 +21,7 @@
 import logging
 import os
 import subprocess
+from typing import List, Any
 from tests.lib.kubernetes.kubernetes_base import KubernetesBase
 from tests.lib.hardware.hardware_base import HardwareBase
 from tests.lib.workspace import Workspace
@@ -53,53 +54,34 @@ class CaaSP(KubernetesBase):
         with self.workspace.chdir(self._clusterpath):
             self._caasp_join()
 
-    def _caasp_init(self):
+    def _skuba_run(self, args: List[Any]):
+        env = os.environ.copy()
+        env['SSH_AUTH_SOCK'] = self.workspace.ssh_agent_auth_sock
+        env['SSH_AGENT_PID'] = self.workspace.ssh_agent_pid
+        cmd = ['skuba'] + args
+        logger.info(f'running command: {" ".join(cmd)}')
         try:
-            env = os.environ.copy()
-            env['SSH_AUTH_SOCK'] = self.workspace.ssh_agent_auth_sock
-            env['SSH_AGENT_PID'] = self.workspace.ssh_agent_pid
-            res = subprocess.run(
-                ['skuba', 'cluster', 'init', '--control-plane',
-                 self.hardware.masters[0].get_ssh_ip(),
-                 self._clusterpath],
-                env=env, check=True, capture_output=True)
-            logger.debug(res.args)
+            subprocess.run(cmd, env=env, check=True, capture_output=True)
         except subprocess.CalledProcessError as e:
-            logger.exception('skuba cluster init failed: '
+            logger.exception(f'failed to run command {" ".join(cmd)}: '
                              f'{e.stdout}\n{e.stderr}')
             raise
 
+    def _caasp_init(self):
+        args = ['cluster', 'init', '--control-plane',
+                self.hardware.masters[0].get_ssh_ip(),
+                self._clusterpath]
+        self._skuba_run(args)
+
     def _caasp_bootstrap(self):
-        try:
-            env = os.environ.copy()
-            env['SSH_AUTH_SOCK'] = self.workspace.ssh_agent_auth_sock
-            env['SSH_AGENT_PID'] = self.workspace.ssh_agent_pid
-            logger.info("skube node bootstrap. This may take a while")
-            res = subprocess.run(
-                ['skuba', 'node', 'bootstrap', '--user', 'sles', '--sudo',
-                 '--target', self.hardware.masters[0].get_ssh_ip(),
-                 self.hardware.masters[0].dnsname],
-                env=env, check=True, capture_output=True)
-            logger.debug(res.args)
-        except subprocess.CalledProcessError as e:
-            logger.exception('skuba node bootstrap failed: '
-                             f'{e.stdout}\n{e.stderr}')
-            raise
+        args = ['node', 'bootstrap', '--user', 'sles', '--sudo',
+                '--target', self.hardware.masters[0].get_ssh_ip(),
+                self.hardware.masters[0].dnsname]
+        self._skuba_run(args)
 
     def _caasp_join(self):
         for worker in self.hardware.workers:
-            try:
-                env = os.environ.copy()
-                env['SSH_AUTH_SOCK'] = self.workspace.ssh_agent_auth_sock
-                env['SSH_AGENT_PID'] = self.workspace.ssh_agent_pid
-                res = subprocess.run(
-                    ['skuba', 'node', 'join', '--role', 'worker',
-                     '--user', 'sles', '--sudo', '--target',
-                     worker.get_ssh_ip(), worker.dnsname],
-                    env=env, check=True, capture_output=True)
-                logger.debug(res.args)
-            except subprocess.CalledProcessError as e:
-                logger.exception(
-                    f'skuba node join worker for  {worker.dnsname} failed: '
-                    f'{e.stdout}\n{e.stderr}')
-                raise
+            args = ['node', 'join', '--role', 'worker',
+                    '--user', 'sles', '--sudo', '--target',
+                    worker.get_ssh_ip(), worker.dnsname]
+            self._skuba_run(args)
